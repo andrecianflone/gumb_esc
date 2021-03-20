@@ -1,5 +1,6 @@
 """
-Gumbel-Softmax VAE, modified from:
+Gumbel Esc
+Some code based on Gumbel Softmax from:
 Eric Jang
 Devinder Kumar
 Yongfei Yan
@@ -14,6 +15,7 @@ from torch import nn, optim
 from torch.nn import functional as F
 from torchvision import datasets, transforms
 from torchvision.utils import save_image
+from distributions import GumbelSoftmax
 
 parser = argparse.ArgumentParser(description='VAE MNIST Example')
 parser.add_argument('--batch-size', type=int, default=100, metavar='N',
@@ -50,39 +52,8 @@ test_loader = torch.utils.data.DataLoader(
     datasets.MNIST('./data', train=False, transform=transforms.ToTensor()),
     batch_size=args.batch_size, shuffle=False, **kwargs)
 
-def sample_gumbel(shape, eps=1e-20):
-    U = torch.rand(shape).to(device)
-    return -torch.log(-torch.log(U + eps) + eps)
-
-def gumbel_softmax_sample(logits, temperature):
-    y = logits + sample_gumbel(logits.size())
-    return F.softmax(y / temperature, dim=-1)
-
-def gumbel_softmax(logits, temperature, hard=False):
-    """
-    ST-gumple-softmax
-    input: [*, n_class]
-    return: flatten --> [*, n_class] an one-hot vector
-    """
-    y = gumbel_softmax_sample(logits, temperature)
-
-    if not hard:
-        return y.view(-1, latent_dim * categorical_dim)
-
-    shape = y.size()
-    _, ind = y.max(dim=-1)
-    y_hard = torch.zeros_like(y).view(-1, shape[-1])
-    y_hard.scatter_(1, ind.view(-1, 1), 1)
-    y_hard = y_hard.view(*shape)
-    # Set gradients w.r.t. y_hard gradients w.r.t. y
-    y_hard = (y_hard - y).detach() + y
-    return y_hard.view(-1, latent_dim * categorical_dim)
-
-
-
-
 class VAE_gumbel(nn.Module):
-    def __init__(self, temp):
+    def __init__(self, temp, hard):
         super(VAE_gumbel, self).__init__()
 
         self.fc1 = nn.Linear(784, 512)
@@ -95,6 +66,8 @@ class VAE_gumbel(nn.Module):
 
         self.relu = nn.ReLU()
         self.sigmoid = nn.Sigmoid()
+
+        latent_dist = GumbelSoftmax(temp, hard)
 
     def encode(self, x):
         h1 = self.relu(self.fc1(x))
@@ -109,7 +82,7 @@ class VAE_gumbel(nn.Module):
     def forward(self, x, temp, hard):
         q = self.encode(x.view(-1, 784))
         q_y = q.view(q.size(0), latent_dim, categorical_dim)
-        z = gumbel_softmax(q_y, temp, hard)
+        z = latent_dist.rsample(q_y, temp)
         return self.decode(z), F.softmax(q_y, dim=-1).reshape(*q.size())
 
 
@@ -119,7 +92,7 @@ categorical_dim = 10  # one-of-K vector
 temp_min = 0.5
 ANNEAL_RATE = 0.00003
 
-model = VAE_gumbel(args.temp).to(device)
+model = VAE_gumbel(args.temp, args.hard).to(device)
 optimizer = optim.Adam(model.parameters(), lr=1e-3)
 
 # Reconstruction + KL divergence losses summed over all elements and batch
