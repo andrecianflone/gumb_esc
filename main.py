@@ -1,4 +1,4 @@
-"""
+""""
 Gumbel Esc
 Some code based on Gumbel Softmax from:
 Eric Jang
@@ -31,8 +31,16 @@ parser.add_argument('--log-interval', type=int, default=10, metavar='N',
 parser.add_argument('--hard', action='store_true', default=False,
                     help='hard Gumbel softmax')
 
+parser.add_argument('--latent_dim', type=float, default=30, metavar='S',
+                    help='Gumbel latent dim (default: 1.0)')
+parser.add_argument('--categorical_dim', type=int, default=10, metavar='N',
+                    help='Number of classes per Categorical (default: 10)')
+parser.add_argument('--temp_min', type=float, default=0.5, metavar='S',
+                    help='Min temp (default: 0.5)')
+parser.add_argument('--ANNEAL_RATE', type=float, default=0.00003, metavar='S',
+                    help='Anneal rate (default: 0.00003)')
+
 args = parser.parse_args()
-# args.cuda = not args.no_cuda and torch.cuda.is_available()
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 args.device = device
 
@@ -53,21 +61,21 @@ test_loader = torch.utils.data.DataLoader(
     batch_size=args.batch_size, shuffle=False, **kwargs)
 
 class VAE_gumbel(nn.Module):
-    def __init__(self, temp, hard):
+    def __init__(self, hard):
         super(VAE_gumbel, self).__init__()
 
         self.fc1 = nn.Linear(784, 512)
         self.fc2 = nn.Linear(512, 256)
-        self.fc3 = nn.Linear(256, latent_dim * categorical_dim)
+        self.fc3 = nn.Linear(256, args.latent_dim * args.categorical_dim)
 
-        self.fc4 = nn.Linear(latent_dim * categorical_dim, 256)
+        self.fc4 = nn.Linear(args.latent_dim * args.categorical_dim, 256)
         self.fc5 = nn.Linear(256, 512)
         self.fc6 = nn.Linear(512, 784)
 
         self.relu = nn.ReLU()
         self.sigmoid = nn.Sigmoid()
 
-        latent_dist = GumbelSoftmax(temp, hard)
+        self.latent_dist = GumbelSoftmax(hard, args.categorical_dim, args.latent_dim)
 
     def encode(self, x):
         h1 = self.relu(self.fc1(x))
@@ -79,27 +87,21 @@ class VAE_gumbel(nn.Module):
         h5 = self.relu(self.fc5(h4))
         return self.sigmoid(self.fc6(h5))
 
-    def forward(self, x, temp, hard):
+    def forward(self, x, temp):
         q = self.encode(x.view(-1, 784))
-        q_y = q.view(q.size(0), latent_dim, categorical_dim)
-        z = latent_dist.rsample(q_y, temp)
+        q_y = q.view(q.size(0), args.latent_dim, args.categorical_dim)
+        z = self.latent_dist.rsample(q_y, temp)
         return self.decode(z), F.softmax(q_y, dim=-1).reshape(*q.size())
 
 
-latent_dim = 30
-categorical_dim = 10  # one-of-K vector
-
-temp_min = 0.5
-ANNEAL_RATE = 0.00003
-
-model = VAE_gumbel(args.temp, args.hard).to(device)
+model = VAE_gumbel(args.hard).to(device)
 optimizer = optim.Adam(model.parameters(), lr=1e-3)
 
 # Reconstruction + KL divergence losses summed over all elements and batch
 def loss_function(recon_x, x, qy):
     BCE = F.binary_cross_entropy(recon_x, x.view(-1, 784), size_average=False) / x.shape[0]
 
-    log_ratio = torch.log(qy * categorical_dim + 1e-20)
+    log_ratio = torch.log(qy * args.categorical_dim + 1e-20)
     KLD = torch.sum(qy * log_ratio, dim=-1).mean()
 
     return BCE + KLD
@@ -112,13 +114,13 @@ def train(epoch):
     for batch_idx, (data, _) in enumerate(train_loader):
         data = data.to(device)
         optimizer.zero_grad()
-        recon_batch, qy = model(data, temp, args.hard)
+        recon_batch, qy = model(data, temp)
         loss = loss_function(recon_batch, data, qy)
         loss.backward()
         train_loss += loss.item() * len(data)
         optimizer.step()
         if batch_idx % 100 == 1:
-            temp = np.maximum(temp * np.exp(-ANNEAL_RATE * batch_idx), temp_min)
+            temp = np.maximum(temp * np.exp(-args.ANNEAL_RATE * batch_idx), args.temp_min)
 
         if batch_idx % args.log_interval == 0:
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
@@ -136,10 +138,10 @@ def test(epoch):
     temp = args.temp
     for i, (data, _) in enumerate(test_loader):
         data = data.to(device)
-        recon_batch, qy = model(data, temp, args.hard)
+        recon_batch, qy = model(data, temp)
         test_loss += loss_function(recon_batch, data, qy).item() * len(data)
         if i % 100 == 1:
-            temp = np.maximum(temp * np.exp(-ANNEAL_RATE * i), temp_min)
+            temp = np.maximum(temp * np.exp(-args.ANNEAL_RATE * i), args.temp_min)
         if i == 0:
             n = min(data.size(0), 8)
             comparison = torch.cat([data[:n],
@@ -156,13 +158,13 @@ def run():
         train(epoch)
         test(epoch)
 
-        M = 64 * latent_dim
-        np_y = np.zeros((M, categorical_dim), dtype=np.float32)
-        np_y[range(M), np.random.choice(categorical_dim, M)] = 1
-        np_y = np.reshape(np_y, [M // latent_dim, latent_dim, categorical_dim])
-        sample = torch.from_numpy(np_y).view(M // latent_dim, latent_dim * categorical_dim).to(device)
+        M = 64 * args.latent_dim
+        np_y = np.zeros((M, args.categorical_dim), dtype=np.float32)
+        np_y[range(M), np.random.choice(args.categorical_dim, M)] = 1
+        np_y = np.reshape(np_y, [M // args.latent_dim, args.latent_dim, args.categorical_dim])
+        sample = torch.from_numpy(np_y).view(M // args.latent_dim, args.latent_dim * args.categorical_dim).to(device)
         sample = model.decode(sample).cpu()
-        save_image(sample.data.view(M // latent_dim, 1, 28, 28),
+        save_image(sample.data.view(M // args.latent_dim, 1, 28, 28),
                    'results/sample_' + str(epoch) + '.png')
 
 
