@@ -1,9 +1,9 @@
 """"
 Gumbel Esc
 Some code based on Gumbel Softmax from:
-Eric Jang
+Eric Jang: https://github.com/ericjang/gumbel-softmax/blob/master/Categorical%20VAE.ipynb
 Devinder Kumar
-Yongfei Yan
+Yongfei Yan: https://github.com/YongfeiYan/Gumbel_Softmax_VAE/blob/master/gumbel_softmax_vae.py
 """
 
 import argparse
@@ -15,7 +15,7 @@ from torch import nn, optim
 from torch.nn import functional as F
 from torchvision import datasets, transforms
 from torchvision.utils import save_image
-from distributions import GumbelSoftmax
+from distributions import GumbelSoftmax, GumbelEscort
 
 parser = argparse.ArgumentParser(description='VAE MNIST Example')
 parser.add_argument('--batch-size', type=int, default=100, metavar='N',
@@ -76,6 +76,7 @@ class VAE_gumbel(nn.Module):
         self.sigmoid = nn.Sigmoid()
 
         self.latent_dist = GumbelSoftmax(hard, args.categorical_dim, args.latent_dim)
+        # self.latent_dist = GumbelEscort(hard, args.categorical_dim, args.latent_dim, p=12)
 
     def encode(self, x):
         h1 = self.relu(self.fc1(x))
