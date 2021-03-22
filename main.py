@@ -20,7 +20,7 @@ from distributions import GumbelSoftmax, GumbelEscort
 parser = argparse.ArgumentParser(description='VAE MNIST Example')
 parser.add_argument('--batch-size', type=int, default=100, metavar='N',
                     help='input batch size for training (default: 100)')
-parser.add_argument('--epochs', type=int, default=100, metavar='N',
+parser.add_argument('--epochs', type=int, default=2, metavar='N',
                     help='number of epochs to train (default: 10)')
 parser.add_argument('--temp', type=float, default=1.0, metavar='S',
                     help='tau(temperature) (default: 1.0)')
@@ -149,7 +149,7 @@ def main(args):
     elif args.distribution == 'escort':
         latent_dist = GumbelEscort(hard, args.categorical_dim, args.latent_dim, p=2)
 
-    model = VAE(args.hard, args.latent_dim, args.categorical_dim).to(device)
+    model = VAE(latent_dist, args.latent_dim, args.categorical_dim).to(device)
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
 
     train_loader = torch.utils.data.DataLoader(
